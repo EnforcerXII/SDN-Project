@@ -1,57 +1,66 @@
 #!/bin/bash
-# run.sh — Launch the SDN Traffic Monitor project
+# run.sh — Launch the SDN Traffic Monitor (POX version)
 # Usage: bash run.sh
-# Requires: ryu-manager, mn (mininet), sudo
+# Requires: POX (cloned), mininet, sudo
 
 set -e
 
 echo ""
 echo "╔══════════════════════════════════════════╗"
 echo "║    SDN Traffic Monitor — UE24CS252B      ║"
+echo "║    Controller: POX (OpenFlow 1.0)        ║"
 echo "╚══════════════════════════════════════════╝"
 echo ""
 
-# ── Check dependencies ────────────────────────────────────────────────────────
-check_cmd() {
-    if ! command -v "$1" &>/dev/null; then
-        echo "[ERROR] '$1' not found. $2"
-        exit 1
+# ── Locate POX ────────────────────────────────────────────────────────────────
+POX_DIR=""
+for candidate in "$HOME/pox" "./pox" "../pox" "/opt/pox"; do
+    if [ -f "$candidate/pox.py" ]; then
+        POX_DIR="$candidate"
+        break
     fi
-}
+done
 
-check_cmd ryu-manager  "Install with: pip install ryu"
-check_cmd mn           "Install with: sudo pacman -S mininet  OR  sudo apt install mininet"
-check_cmd ovs-vsctl    "Install Open vSwitch: sudo pacman -S openvswitch"
+if [ -z "$POX_DIR" ]; then
+    echo "[ERROR] POX not found. Clone it first:"
+    echo "        git clone https://github.com/noxrepo/pox ~/pox"
+    exit 1
+fi
 
-# ── Ensure OVS is running (Arch needs manual start) ───────────────────────────
-echo "[*] Starting Open vSwitch services..."
-sudo systemctl start ovsdb-server 2>/dev/null || true
-sudo systemctl start ovs-vswitchd  2>/dev/null || true
-sleep 1
+echo "[*] Found POX at: $POX_DIR"
+
+# ── Check mininet ─────────────────────────────────────────────────────────────
+if ! command -v mn &>/dev/null; then
+    echo "[ERROR] Mininet not found. Install: sudo apt install mininet"
+    exit 1
+fi
+
+# ── Copy controller into POX ext/ ─────────────────────────────────────────────
+echo "[*] Installing traffic_monitor.py into POX ext/..."
+cp traffic_monitor.py "$POX_DIR/ext/traffic_monitor.py"
 
 # ── Clean up any previous Mininet state ───────────────────────────────────────
 echo "[*] Cleaning up old Mininet state..."
 sudo mn -c 2>/dev/null || true
 
-# ── Start Ryu controller in background ───────────────────────────────────────
-echo "[*] Starting Ryu controller (traffic_monitor.py)..."
-ryu-manager traffic_monitor.py \
-    --ofp-tcp-listen-port 6653 \
-    --verbose \
-    > ryu.log 2>&1 &
-RYU_PID=$!
-echo "[*] Ryu PID: $RYU_PID  (logs → ryu.log)"
+# ── Start POX controller in background ───────────────────────────────────────
+echo "[*] Starting POX controller..."
+cd "$POX_DIR"
+python3 pox.py log.level --DEBUG traffic_monitor > /tmp/pox.log 2>&1 &
+POX_PID=$!
+cd - > /dev/null
+echo "[*] POX PID: $POX_PID  (logs → /tmp/pox.log)"
 
-sleep 3  # Give Ryu time to bind
+sleep 4  # Give POX time to bind on :6633
 
-# ── Start Mininet topology ────────────────────────────────────────────────────
+# ── Start Mininet ─────────────────────────────────────────────────────────────
 echo "[*] Starting Mininet topology..."
 sudo python3 topology.py
 
 # ── Cleanup ───────────────────────────────────────────────────────────────────
 echo ""
-echo "[*] Stopping Ryu controller (PID $RYU_PID)..."
-kill $RYU_PID 2>/dev/null || true
+echo "[*] Stopping POX (PID $POX_PID)..."
+kill $POX_PID 2>/dev/null || true
 
 echo ""
 echo "[✓] Done. Check traffic_log.txt for the full monitor log."

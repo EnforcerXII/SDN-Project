@@ -1,30 +1,27 @@
 #!/usr/bin/env python3
 """
-SDN Traffic Monitor - Mininet Topology
+SDN Traffic Monitor - Mininet Topology (POX version)
 Course: COMPUTER NETWORKS - UE24CS252B
 
 Topology:
-            [Controller :6653]
-                   |
-               [s1 switch]
-              /    |    \  \
-            h1    h2    h3  h4
+        [POX Controller :6633]
+                |
+          [s1 — OVS Switch]
+         /    |    \    \
+       h1    h2    h3    h4
+  10.0.0.1   .2    .3    .4
 
-  h1  10.0.0.1 / 00:00:00:00:00:01
-  h2  10.0.0.2 / 00:00:00:00:00:02
-  h3  10.0.0.3 / 00:00:00:00:00:03
-  h4  10.0.0.4 / 00:00:00:00:00:04
-
-Usage:
+Usage (after POX is running):
     sudo python3 topology.py
 """
 
-from mininet.net import Mininet
-from mininet.node import RemoteController, OVSSwitch
-from mininet.cli import CLI
-from mininet.log import setLogLevel, info
-from mininet.link import TCLink
 import time
+
+from mininet.cli import CLI
+from mininet.link import TCLink
+from mininet.log import info, setLogLevel
+from mininet.net import Mininet
+from mininet.node import OVSSwitch, RemoteController
 
 
 def build_network():
@@ -37,16 +34,16 @@ def build_network():
         autoSetMacs=True,
     )
 
-    info("\n*** Adding controller (Ryu on localhost:6653)\n")
+    info("\n*** Adding controller (POX on localhost:6633)\n")
     c0 = net.addController(
         "c0",
         controller=RemoteController,
         ip="127.0.0.1",
-        port=6653,
+        port=6633,  # POX default port
     )
 
     info("*** Adding switch\n")
-    s1 = net.addSwitch("s1", protocols="OpenFlow13")
+    s1 = net.addSwitch("s1", protocols="OpenFlow10")  # POX uses OF 1.0
 
     info("*** Adding hosts\n")
     h1 = net.addHost("h1", ip="10.0.0.1/24", mac="00:00:00:00:00:01")
@@ -54,7 +51,7 @@ def build_network():
     h3 = net.addHost("h3", ip="10.0.0.3/24", mac="00:00:00:00:00:03")
     h4 = net.addHost("h4", ip="10.0.0.4/24", mac="00:00:00:00:00:04")
 
-    info("*** Creating links (100Mbps, 5ms delay)\n")
+    info("*** Creating links (100 Mbps, 5ms delay)\n")
     for host in [h1, h2, h3, h4]:
         net.addLink(host, s1, bw=100, delay="5ms")
 
@@ -63,8 +60,8 @@ def build_network():
     c0.start()
     s1.start([c0])
 
-    info("\n*** Waiting for controller to connect...\n")
-    time.sleep(2)
+    info("\n*** Waiting for controller handshake...\n")
+    time.sleep(3)
 
     # ── Scenario 1: Basic connectivity ────────────────────────────────────────
     info("\n" + "=" * 60 + "\n")
@@ -72,14 +69,14 @@ def build_network():
     info("=" * 60 + "\n")
     net.pingAll()
 
-    # ── Scenario 2: ICMP traffic between specific hosts ───────────────────────
+    # ── Scenario 2: Targeted ICMP ─────────────────────────────────────────────
     info("\n" + "=" * 60 + "\n")
     info("SCENARIO 2: Targeted ping  h1 → h3  (10 packets)\n")
     info("=" * 60 + "\n")
     result = h1.cmd("ping -c 10 10.0.0.3")
     info(result)
 
-    # ── Scenario 3: iperf TCP throughput ─────────────────────────────────────
+    # ── Scenario 3: TCP throughput ────────────────────────────────────────────
     info("\n" + "=" * 60 + "\n")
     info("SCENARIO 3: TCP throughput  h2 (server) ↔ h4 (client)\n")
     info("=" * 60 + "\n")
@@ -89,7 +86,7 @@ def build_network():
     info(result)
     h2.cmd("kill %iperf")
 
-    # ── Scenario 4: UDP flood (triggers alert) ────────────────────────────────
+    # ── Scenario 4: UDP burst (triggers alert) ────────────────────────────────
     info("\n" + "=" * 60 + "\n")
     info("SCENARIO 4: UDP burst  h1 → h2  (triggers high-traffic alert)\n")
     info("=" * 60 + "\n")
@@ -99,8 +96,8 @@ def build_network():
     info(result)
     h2.cmd("kill %iperf")
 
-    info("\n*** All scenarios complete. Dropping into CLI...\n")
-    info("    Useful commands: pingall | h1 ping h3 | nodes | net | dump\n\n")
+    info("\n*** All scenarios complete — dropping into CLI\n")
+    info("    Try: pingall | h1 ping -c3 h3 | nodes | net | dump\n\n")
 
     CLI(net)
 
